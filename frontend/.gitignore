@@ -1,0 +1,66 @@
+# OSX
+.DS_Store
+
+# Node
+node_modules/
+npm-debug.log
+yarn-error.log
+
+# Expo
+.expo/
+web-build/
+dist/
+
+# Environment
+.env
+.env.local
+.env.production
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Build outputs
+*.js.map
+*.d.ts.map
+
+# Logs
+logs/
+*.log
+
+# Testing
+coverage/
+
+# Temporary files
+*.tmp
+*.temp
+
+# Uploads
+uploads/
+
+# iOS
+*.pbxuser
+*.mode1v3
+*.mode2v3
+*.perspectivev3
+*.xcuserstate
+project.xcworkspace/
+xcuserdata/
+*.moved-aside
+DerivedData
+*.hmap
+*.ipa
+*.dSYM.zip
+*.dSYM
+
+# Android
+android/
+*.iml
+.gradle
+/local.properties
+*.keystore
+
+# Debug
+*.tsbuildinfo
