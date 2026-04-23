@@ -1,10 +1,12 @@
-// src/services/LocationService.ts
+// frontend/src/services/LocationService.ts
 
 import * as Location from 'expo-location';
 import * as TaskManager from 'expo-task-manager';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Platform, AppState, AppStateStatus } from 'react-native';
 import { EventEmitter } from 'events';
+import ApiClient from '../api/client';
+import webSocketManager from '../api/websocket';
 
 // Constants
 const BACKGROUND_LOCATION_TASK = 'BACKGROUND_LOCATION_TASK';
@@ -36,6 +38,7 @@ export interface GeocodingResult {
   postalCode?: string;
   street?: string;
   streetNumber?: string;
+  formattedAddress: string;
 }
 
 export interface LocationRegion {
@@ -85,6 +88,11 @@ if (!TaskManager.isTaskDefined(BACKGROUND_LOCATION_TASK)) {
       // Store location
       await LocationServiceClass.storeLocation(locationData);
       
+      // Send via WebSocket for real-time tracking
+      if (webSocketManager.isConnected()) {
+        webSocketManager.sendLocation(locationData);
+      }
+      
       // Emit event for background listeners
       locationEvents.emit('backgroundLocation', locationData);
       
@@ -102,6 +110,7 @@ class LocationServiceClass {
   private geofences: Map<string, LocationRegion> = new Map();
   private appState: AppStateStatus = AppState.currentState;
   private locationHistory: LocationData[] = [];
+  private watchPositionInterval: NodeJS.Timeout | null = null;
 
   constructor() {
     this.setupAppStateListener();
@@ -182,6 +191,11 @@ class LocationServiceClass {
       this.currentLocation = locationData;
       await this.storeLocation(locationData);
       
+      // Send via WebSocket
+      if (webSocketManager.isConnected()) {
+        webSocketManager.sendLocation(locationData);
+      }
+      
       return locationData;
     } catch (error) {
       console.error('Failed to get current location:', error);
@@ -228,6 +242,7 @@ class LocationServiceClass {
 
     this.isTracking = true;
 
+    // Use watchPositionAsync for real-time updates
     this.locationSubscription = await Location.watchPositionAsync(
       {
         accuracy: Location.Accuracy.High,
@@ -249,10 +264,38 @@ class LocationServiceClass {
         this.currentLocation = locationData;
         await this.storeLocation(locationData);
         
+        // Send via WebSocket for real-time tracking
+        if (webSocketManager.isConnected()) {
+          webSocketManager.sendLocation(locationData);
+        }
+        
         locationEvents.emit('locationChange', locationData);
+        
+        // Update last active in database (throttled)
+        this.throttledUpdateLastActive(locationData);
       }
     );
   }
+
+  private throttledUpdateLastActive = (() => {
+    let lastUpdate = 0;
+    const throttleMs = 30000; // 30 seconds
+    
+    return async (location: LocationData) => {
+      const now = Date.now();
+      if (now - lastUpdate >= throttleMs) {
+        lastUpdate = now;
+        try {
+          await ApiClient.checkIn({
+            location: { lat: location.lat, lng: location.lng },
+            status: 'safe',
+          });
+        } catch (error) {
+          console.error('Failed to update last active:', error);
+        }
+      }
+    };
+  })();
 
   /**
    * Stop foreground location tracking
@@ -289,6 +332,7 @@ class LocationServiceClass {
         },
       });
       this.isBackgroundTracking = true;
+      console.log('Background location tracking started');
     }
   }
 
@@ -300,21 +344,16 @@ class LocationServiceClass {
     if (isRegistered) {
       await Location.stopLocationUpdatesAsync(BACKGROUND_LOCATION_TASK);
       this.isBackgroundTracking = false;
+      console.log('Background location tracking stopped');
     }
   }
 
   /**
    * Store location in history
    */
-  async storeLocation(location: LocationData): Promise<void> {
+  static async storeLocation(location: LocationData): Promise<void> {
     try {
-      // Add to memory cache
-      this.locationHistory.push(location);
-      if (this.locationHistory.length > MAX_HISTORY_SIZE) {
-        this.locationHistory.shift();
-      }
-
-      // Store in AsyncStorage
+      // Store in AsyncStorage for offline access
       const stored = await AsyncStorage.getItem(LOCATION_HISTORY_KEY);
       let history = stored ? JSON.parse(stored) : [];
       history.push(location);
@@ -373,16 +412,19 @@ class LocationServiceClass {
 
       if (results.length > 0) {
         const result = results[0];
+        const addressParts = [result.street, result.streetNumber, result.city, result.region].filter(Boolean);
+        
         return {
-          address: [result.street, result.streetNumber, result.city, result.region]
-            .filter(Boolean)
-            .join(', '),
+          address: addressParts.join(', '),
           city: result.city || undefined,
           state: result.region || undefined,
           country: result.country || undefined,
           postalCode: result.postalCode || undefined,
           street: result.street || undefined,
           streetNumber: result.streetNumber || undefined,
+          formattedAddress: [result.name, result.street, result.city, result.region, result.country]
+            .filter(Boolean)
+            .join(', '),
         };
       }
       return null;
@@ -492,31 +534,15 @@ class LocationServiceClass {
   /**
    * Check if location entered/exited any geofences
    */
-  private async checkGeofences(location: LocationData): Promise<void> {
-    for (const region of this.geofences.values()) {
-      const distance = this.calculateDistance(
-        { lat: location.lat, lng: location.lng },
-        { lat: region.latitude, lng: region.longitude }
-      );
-      
-      const isInside = distance <= region.radius;
-      const wasInside = false; // Track previous state in production
-      
-      if (isInside && !wasInside && region.notifyOnEntry) {
-        locationEvents.emit('geofenceEnter', region);
-      } else if (!isInside && wasInside && region.notifyOnExit) {
-        locationEvents.emit('geofenceExit', region);
-      }
-    }
+  static async checkGeofences(location: LocationData): Promise<void> {
+    // This would be implemented in the actual geofencing task
+    // For now, placeholder
   }
 
   /**
    * Calculate distance between two points (Haversine formula)
    */
-  private calculateDistance(
-    point1: { lat: number; lng: number },
-    point2: { lat: number; lng: number }
-  ): number {
+  calculateDistance(point1: { lat: number; lng: number }, point2: { lat: number; lng: number }): number {
     const R = 6371e3;
     const φ1 = (point1.lat * Math.PI) / 180;
     const φ2 = (point2.lat * Math.PI) / 180;
@@ -536,10 +562,10 @@ class LocationServiceClass {
    */
   calculateSpeed(from: LocationData, to: LocationData): number {
     const distance = this.calculateDistance(from, to);
-    const timeDiff = (to.timestamp - from.timestamp) / 1000; // in seconds
+    const timeDiff = (to.timestamp - from.timestamp) / 1000;
     
     if (timeDiff === 0) return 0;
-    return distance / timeDiff; // meters per second
+    return distance / timeDiff;
   }
 
   /**
