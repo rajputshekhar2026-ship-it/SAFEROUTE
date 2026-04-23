@@ -22,26 +22,22 @@
     "seed:refuges": "node dist/scripts/seedRefuges.js",
     "train-model": "python3 src/scripts/trainCrimeModel.py",
     "predict": "python3 src/scripts/predictCrime.py",
-    
     "pm2:start": "pm2 start ecosystem.config.js",
     "pm2:stop": "pm2 stop ecosystem.config.js",
     "pm2:restart": "pm2 restart ecosystem.config.js",
     "pm2:delete": "pm2 delete ecosystem.config.js",
     "pm2:logs": "pm2 logs safe-route-backend",
     "pm2:monit": "pm2 monit",
-    
     "docker:build": "docker build -t safe-route-backend .",
     "docker:run": "docker run -p 3000:3000 --env-file .env safe-route-backend",
     "docker:compose:up": "docker-compose up -d",
     "docker:compose:down": "docker-compose down",
-    
     "test": "jest",
     "test:watch": "jest --watch",
     "test:coverage": "jest --coverage",
     "lint": "eslint src/**/*.ts",
     "lint:fix": "eslint src/**/*.ts --fix",
     "format": "prettier --write \"src/**/*.ts\"",
-    
     "deploy:aws": "./scripts/deploy-aws.sh",
     "deploy:digitalocean": "./scripts/deploy-digitalocean.sh",
     "backup:db": "./scripts/backup-db.sh",
@@ -80,14 +76,14 @@
     "node-fetch": "^3.3.1",
     "form-data": "^4.0.0",
     "sharp": "^0.32.1",
-    "express-rate-limit": "^6.7.0",
     "express-slow-down": "^1.6.0",
     "xss": "^1.0.14",
     "crypto-js": "^4.1.1",
     "nodemailer": "^6.9.3",
     "handlebars": "^4.7.7",
     "@sendgrid/mail": "^7.7.0",
-    "stripe": "^12.9.0"
+    "stripe": "^12.9.0",
+    "@types/multer": "^1.4.7"
   },
   "devDependencies": {
     "@types/node": "^20.3.1",
