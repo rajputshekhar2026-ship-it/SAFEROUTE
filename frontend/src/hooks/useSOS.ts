@@ -1,12 +1,11 @@
-// src/hooks/useSOS.ts
+// frontend/src/hooks/useSOS.ts
 
 import { useState, useRef, useCallback, useEffect } from 'react';
 import { Alert, Vibration, Platform, AppState, AppStateStatus } from 'react-native';
 import * as Haptics from 'expo-haptics';
-import * as FileSystem from 'expo-file-system';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import ApiClient from '../api/client';
-import WebSocketManager from '../api/websocket';
+import ApiClient, { SOSRequest, SOSResponse, SOSEvent } from '../api/client';
+import useWebSocket from './useWebSocket';
 import { AudioService } from '../services/AudioService';
 import { CameraService } from '../services/CameraService';
 import { LocationData } from './useLocation';
@@ -20,17 +19,14 @@ export interface SOSData {
   photoUri?: string;
   message?: string;
   contacts: string[];
-  includeLocationHistory: boolean;
-  status: 'pending' | 'sent' | 'failed' | 'cancelled';
-  response?: SOSResponse;
-}
-
-export interface SOSResponse {
-  acknowledged: boolean;
-  responderId?: string;
-  eta?: number;
-  message?: string;
-  timestamp: number;
+  status: 'pending' | 'sent' | 'failed' | 'cancelled' | 'responded' | 'resolved';
+  response?: {
+    acknowledged: boolean;
+    responderId?: string;
+    eta?: number;
+    message?: string;
+    timestamp: number;
+  };
 }
 
 export interface SOSContact {
@@ -41,15 +37,16 @@ export interface SOSContact {
   isEmergencyContact: boolean;
   notifyViaSMS: boolean;
   notifyViaPush: boolean;
+  relationship: string;
 }
 
 export interface SOSConfig {
   autoSend: boolean;
-  autoSendDelay: number; // seconds
+  autoSendDelay: number;
   includePhoto: boolean;
   includeAudio: boolean;
   includeLocationHistory: boolean;
-  historyDuration: number; // seconds of history to include
+  historyDuration: number;
   vibrationPattern: number[];
   sosMessageTemplate: string;
   retryAttempts: number;
@@ -106,7 +103,7 @@ interface UseSOSOptions {
   onSOSStarted?: () => void;
   onSOSSent?: (data: SOSData) => void;
   onSOSFailed?: (error: Error) => void;
-  onSOSAcknowledged?: (response: SOSResponse) => void;
+  onSOSAcknowledged?: (response: SOSData['response']) => void;
 }
 
 interface UseSOSReturn {
@@ -121,8 +118,9 @@ interface UseSOSReturn {
   removeContact: (contactId: string) => Promise<void>;
   getContacts: () => Promise<SOSContact[]>;
   sendTestSOS: () => Promise<void>;
-  getSOSHistory: () => Promise<SOSData[]>;
+  getSOSHistory: () => Promise<SOSEvent[]>;
   clearSOSHistory: () => Promise<void>;
+  getSOSStatus: (sosId: string) => Promise<SOSEvent | null>;
 }
 
 export const useSOS = (options: UseSOSOptions = {}): UseSOSReturn => {
@@ -140,6 +138,7 @@ export const useSOS = (options: UseSOSOptions = {}): UseSOSReturn => {
   const [config, setConfig] = useState<SOSConfig>({ ...DEFAULT_SOS_CONFIG, ...userConfig });
   const [contacts, setContacts] = useState<SOSContact[]>([]);
   
+  const { sendSOS, isConnected: wsConnected } = useWebSocket({});
   const countdownIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const retryIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const locationHistoryRef = useRef<LocationData[]>([]);
@@ -149,7 +148,6 @@ export const useSOS = (options: UseSOSOptions = {}): UseSOSReturn => {
   useEffect(() => {
     loadConfig();
     loadContacts();
-    loadSOSHistory();
     setupAppStateListener();
     setupWebSocketListeners();
 
@@ -179,27 +177,47 @@ export const useSOS = (options: UseSOSOptions = {}): UseSOSReturn => {
   };
 
   const setupWebSocketListeners = () => {
-    WebSocketManager.on('sos_received', handleSOSResponse);
+    sosEvents.on('sos-response', handleSOSResponse);
+    sosEvents.on('sos-acknowledged', handleSOSAcknowledgement);
   };
 
   const cleanupWebSocketListeners = () => {
-    WebSocketManager.off('sos_received', handleSOSResponse);
+    sosEvents.off('sos-response', handleSOSResponse);
+    sosEvents.off('sos-acknowledged', handleSOSAcknowledgement);
   };
 
-  const handleSOSResponse = (response: SOSResponse) => {
+  const handleSOSResponse = (response: any) => {
     if (sosData && sosData.status === 'sent') {
-      const updatedSOS = { ...sosData, response, status: 'sent' as const };
+      const updatedSOS = { 
+        ...sosData, 
+        response: {
+          acknowledged: true,
+          responderId: response.responderId,
+          eta: response.eta,
+          message: response.message,
+          timestamp: response.timestamp,
+        },
+        status: 'responded' as const,
+      };
       setSOSData(updatedSOS);
-      onSOSAcknowledged?.(response);
+      onSOSAcknowledged?.(updatedSOS.response);
       
       // Show acknowledgment alert
-      if (response.acknowledged) {
-        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-        Alert.alert(
-          'SOS Acknowledged',
-          response.message || 'Emergency services have been notified. Help is on the way.',
-          [{ text: 'OK' }]
-        );
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      Alert.alert(
+        'SOS Acknowledged',
+        response.message || 'Emergency services have been notified. Help is on the way.',
+        [{ text: 'OK' }]
+      );
+    }
+  };
+
+  const handleSOSAcknowledgement = (data: any) => {
+    if (sosData && data.sosId === sosData.id) {
+      if (sosData.status === 'pending') {
+        const updatedSOS = { ...sosData, status: 'sent' as const };
+        setSOSData(updatedSOS);
+        onSOSSent?.(updatedSOS);
       }
     }
   };
@@ -217,10 +235,18 @@ export const useSOS = (options: UseSOSOptions = {}): UseSOSReturn => {
 
   const loadContacts = async () => {
     try {
-      const response = await ApiClient.getTrustedContacts();
-      if (response && response.contacts) {
-        setContacts(response.contacts);
-      }
+      const response = await ApiClient.getEmergencyContacts();
+      const emergencyContacts = response.emergencyContacts.map(contact => ({
+        id: contact.id,
+        name: contact.name,
+        phone: contact.phone,
+        email: contact.email,
+        isEmergencyContact: contact.isEmergencyContact,
+        notifyViaSMS: contact.notifyViaSMS,
+        notifyViaPush: contact.notifyViaPush,
+        relationship: contact.relationship,
+      }));
+      setContacts(emergencyContacts);
     } catch (error) {
       console.error('Failed to load contacts:', error);
       // Load from local storage as fallback
@@ -231,23 +257,17 @@ export const useSOS = (options: UseSOSOptions = {}): UseSOSReturn => {
     }
   };
 
-  const loadSOSHistory = async () => {
-    try {
-      const history = await AsyncStorage.getItem('sos_history');
-      if (history) {
-        // Don't set to state, just cache
-        JSON.parse(history);
-      }
-    } catch (error) {
-      console.error('Failed to load SOS history:', error);
-    }
-  };
-
   const saveSOSHistory = async (sos: SOSData) => {
     try {
       const history = await AsyncStorage.getItem('sos_history');
       const historyArray = history ? JSON.parse(history) : [];
-      historyArray.unshift(sos);
+      historyArray.unshift({
+        id: sos.id,
+        location: sos.location,
+        message: sos.message,
+        status: sos.status,
+        createdAt: new Date(sos.timestamp).toISOString(),
+      });
       // Keep last 50 entries
       const trimmedHistory = historyArray.slice(0, 50);
       await AsyncStorage.setItem('sos_history', JSON.stringify(trimmedHistory));
@@ -278,16 +298,10 @@ export const useSOS = (options: UseSOSOptions = {}): UseSOSReturn => {
     return contacts;
   };
 
-  const collectLocationHistory = async (durationSeconds: number): Promise<LocationData[]> => {
-    // In production, this would query stored location history
-    // For now, return current location
-    return locationHistoryRef.current.slice(-Math.floor(durationSeconds / 5));
-  };
-
   const captureAudio = async (): Promise<string | undefined> => {
     try {
-      const audioUri = await AudioService.recordAudio(5000); // 5 seconds
-      return audioUri;
+      const recording = await AudioService.recordAudio(5000); // 5 seconds
+      return recording?.uri;
     } catch (error) {
       console.error('Failed to capture audio:', error);
       return undefined;
@@ -296,8 +310,8 @@ export const useSOS = (options: UseSOSOptions = {}): UseSOSReturn => {
 
   const capturePhoto = async (): Promise<string | undefined> => {
     try {
-      const photoUri = await CameraService.takePhoto();
-      return photoUri;
+      const photo = await CameraService.takePhoto();
+      return photo?.uri;
     } catch (error) {
       console.error('Failed to capture photo:', error);
       return undefined;
@@ -317,7 +331,7 @@ export const useSOS = (options: UseSOSOptions = {}): UseSOSReturn => {
           if (countdownIntervalRef.current) {
             clearInterval(countdownIntervalRef.current);
           }
-          sendSOS();
+          sendSOSCall();
           return 0;
         }
         return prev - 1;
@@ -333,7 +347,7 @@ export const useSOS = (options: UseSOSOptions = {}): UseSOSReturn => {
     Vibration.cancel();
   };
 
-  const sendSOS = async () => {
+  const sendSOSCall = async () => {
     if (!sosData) return;
     
     try {
@@ -343,7 +357,6 @@ export const useSOS = (options: UseSOSOptions = {}): UseSOSReturn => {
       // Prepare SOS data
       let audioUri = sosData.audioUri;
       let photoUri = sosData.photoUri;
-      let locationHistory: LocationData[] = [];
       
       // Capture media if not already captured
       if (config.includeAudio && !audioUri) {
@@ -354,34 +367,32 @@ export const useSOS = (options: UseSOSOptions = {}): UseSOSReturn => {
         photoUri = await capturePhoto();
       }
       
-      if (config.includeLocationHistory) {
-        locationHistory = await collectLocationHistory(config.historyDuration);
-      }
-      
-      // Send SOS via WebSocket
-      const sosPayload = {
+      // Send SOS via API
+      const sosRequest: SOSRequest = {
         location: sosData.location,
-        timestamp: Date.now(),
-        audioUri,
-        photoUri,
         message: sosData.message || config.sosMessageTemplate
           .replace('{location}', `${sosData.location.lat}, ${sosData.location.lng}`)
           .replace('{time}', new Date().toLocaleString()),
+        audioUri,
+        photoUri,
         contacts: sosData.contacts,
-        includeLocationHistory: config.includeLocationHistory,
-        locationHistory: locationHistory,
+        autoTriggered: false,
       };
       
-      // Send to backend
-      const response = await ApiClient.sendSOSMessage(sosPayload);
-      WebSocketManager.sendSOS(sosPayload);
+      // Send via REST API
+      const response = await ApiClient.triggerSOS(sosRequest);
+      
+      // Send via WebSocket for real-time
+      if (wsConnected) {
+        sendSOS(sosRequest);
+      }
       
       const updatedSOS: SOSData = {
         ...sosData,
         audioUri,
         photoUri,
         status: 'sent',
-        id: response.id,
+        id: response.sosId,
       };
       
       setSOSData(updatedSOS);
@@ -396,7 +407,7 @@ export const useSOS = (options: UseSOSOptions = {}): UseSOSReturn => {
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       Alert.alert(
         'SOS Sent',
-        'Emergency alert has been sent to your contacts and emergency services.',
+        `Emergency alert has been sent to ${response.contactsNotified} contacts and emergency services.`,
         [{ text: 'OK' }]
       );
       
@@ -430,7 +441,7 @@ export const useSOS = (options: UseSOSOptions = {}): UseSOSReturn => {
               [{ text: 'OK' }]
             );
           } else {
-            await sendSOS();
+            await sendSOSCall();
           }
         }, config.retryDelay);
       }
@@ -447,21 +458,20 @@ export const useSOS = (options: UseSOSOptions = {}): UseSOSReturn => {
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
     triggerVibration();
     
-    // Get current location
+    // Get current location (should be passed from location hook)
     let currentLocation = options?.location;
     if (!currentLocation) {
       // In production, get from location hook
       currentLocation = { lat: 0, lng: 0, timestamp: Date.now() };
     }
     
-    // Get contacts
+    // Get emergency contacts
     const contactList = options?.contacts || contacts.filter(c => c.isEmergencyContact).map(c => c.id);
     
     const newSOSData: SOSData = {
       location: currentLocation,
       timestamp: Date.now(),
       contacts: contactList,
-      includeLocationHistory: config.includeLocationHistory,
       status: 'pending',
       ...options,
     };
@@ -480,7 +490,7 @@ export const useSOS = (options: UseSOSOptions = {}): UseSOSReturn => {
         `SOS will be sent in ${config.autoSendDelay} seconds. Tap Cancel if you're safe.`,
         [
           { text: 'Cancel SOS', onPress: cancelSOS, style: 'cancel' },
-          { text: 'Send Now', onPress: sendSOS, style: 'destructive' },
+          { text: 'Send Now', onPress: sendSOSCall, style: 'destructive' },
         ],
         { cancelable: false }
       );
@@ -491,7 +501,7 @@ export const useSOS = (options: UseSOSOptions = {}): UseSOSReturn => {
         'Are you sure you want to send an emergency alert?',
         [
           { text: 'Cancel', onPress: cancelSOS, style: 'cancel' },
-          { text: 'Send SOS', onPress: sendSOS, style: 'destructive' },
+          { text: 'Send SOS', onPress: sendSOSCall, style: 'destructive' },
         ]
       );
     }
@@ -507,14 +517,18 @@ export const useSOS = (options: UseSOSOptions = {}): UseSOSReturn => {
     
     stopVibration();
     
+    // Cancel SOS via API if already sent
+    if (sosData?.id && sosData.status === 'sent') {
+      try {
+        await ApiClient.cancelSOS(sosData.id);
+      } catch (error) {
+        console.error('Failed to cancel SOS:', error);
+      }
+    }
+    
     setIsSOSActive(false);
     setSOSData(null);
     setCountdown(0);
-    
-    // Notify backend that SOS was cancelled
-    if (sosData?.id) {
-      await ApiClient.cancelSOS(sosData.id);
-    }
     
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
   };
@@ -523,7 +537,6 @@ export const useSOS = (options: UseSOSOptions = {}): UseSOSReturn => {
     const testData: Partial<SOSData> = {
       message: 'TEST SOS - This is a test message',
       contacts: contacts.slice(0, 1).map(c => c.id),
-      includeLocationHistory: false,
     };
     
     await triggerSOS(testData);
@@ -536,10 +549,10 @@ export const useSOS = (options: UseSOSOptions = {}): UseSOSReturn => {
     }, 5000);
   };
 
-  const getSOSHistory = async (): Promise<SOSData[]> => {
+  const getSOSHistory = async (): Promise<SOSEvent[]> => {
     try {
-      const history = await AsyncStorage.getItem('sos_history');
-      return history ? JSON.parse(history) : [];
+      const response = await ApiClient.getSOSHistory();
+      return response.sosEvents;
     } catch (error) {
       console.error('Failed to get SOS history:', error);
       return [];
@@ -548,6 +561,16 @@ export const useSOS = (options: UseSOSOptions = {}): UseSOSReturn => {
 
   const clearSOSHistory = async () => {
     await AsyncStorage.removeItem('sos_history');
+  };
+
+  const getSOSStatus = async (sosId: string): Promise<SOSEvent | null> => {
+    try {
+      const response = await ApiClient.getSOSStatus(sosId);
+      return response.sos;
+    } catch (error) {
+      console.error('Failed to get SOS status:', error);
+      return null;
+    }
   };
 
   const showSOSActiveAlert = () => {
@@ -575,6 +598,7 @@ export const useSOS = (options: UseSOSOptions = {}): UseSOSReturn => {
     sendTestSOS,
     getSOSHistory,
     clearSOSHistory,
+    getSOSStatus,
   };
 };
 
@@ -611,7 +635,7 @@ export const useAutoSOS = (inactivityThreshold: number = 60000) => {
           );
           setWarningShown(true);
         } else if (inactiveTime >= inactivityThreshold) {
-          triggerSOS();
+          triggerSOS({ autoTriggered: true });
         }
       }
     }, 5000);
