@@ -310,4 +310,41 @@ const styles = StyleSheet.create({
   },
   registerButton: {
     borderRadius: 12,
-    overflow: '
+    overflow: 'hidden',
+    marginBottom: 20,
+  },
+  registerButtonDisabled: {
+    opacity: 0.6,
+  },
+  registerGradient: {
+    paddingVertical: 16,
+    alignItems: 'center',
+  },
+  registerText: {
+    color: '#FFF',
+    fontSize: 18,
+    fontWeight: 'bold',
+  },
+  errorText: {
+    color: '#e94560',
+    fontSize: 14,
+    textAlign: 'center',
+    marginBottom: 15,
+  },
+  loginContainer: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  loginText: {
+    color: 'rgba(255,255,255,0.7)',
+    fontSize: 14,
+  },
+  loginLink: {
+    color: '#e94560',
+    fontSize: 14,
+    fontWeight: '600',
+  },
+});
+
+export default RegisterScreen;
