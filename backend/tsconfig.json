@@ -1,1 +1,182 @@
+{
+  "compilerOptions": {
+    // ============================================
+    // BASIC OPTIONS
+    // ============================================
+    "target": "ES2022",
+    "module": "commonjs",
+    "lib": ["ES2022", "ESNext"],
+    "outDir": "./dist",
+    "rootDir": "./src",
+    "moduleResolution": "node",
+    "types": ["node", "express"],
+    "typeRoots": ["./node_modules/@types", "./src/types"],
+    
+    // ============================================
+    // EMISSION OPTIONS
+    // ============================================
+    "sourceMap": true,
+    "declaration": true,
+    "declarationMap": true,
+    "removeComments": false,
+    "noEmitOnError": true,
+    "emitDecoratorMetadata": true,
+    "experimentalDecorators": true,
+    "resolveJsonModule": true,
+    "esModuleInterop": true,
+    "allowSyntheticDefaultImports": true,
+    
+    // ============================================
+    // TYPE CHECKING OPTIONS
+    // ============================================
+    "strict": true,
+    "noImplicitAny": true,
+    "strictNullChecks": true,
+    "strictFunctionTypes": true,
+    "strictBindCallApply": true,
+    "strictPropertyInitialization": true,
+    "noImplicitThis": true,
+    "useUnknownInCatchVariables": true,
+    "alwaysStrict": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "exactOptionalPropertyTypes": false,
+    "noImplicitReturns": true,
+    "noFallthroughCasesInSwitch": true,
+    "noUncheckedIndexedAccess": true,
+    "noImplicitOverride": true,
+    "noPropertyAccessFromIndexSignature": true,
+    "allowUnusedLabels": false,
+    "allowUnreachableCode": false,
+    
+    // ============================================
+    // MODULE RESOLUTION OPTIONS
+    // ============================================
+    "baseUrl": ".",
+    "paths": {
+      "@/*": ["src/*"],
+      "@config/*": ["src/config/*"],
+      "@controllers/*": ["src/controllers/*"],
+      "@models/*": ["src/models/*"],
+      "@services/*": ["src/services/*"],
+      "@middleware/*": ["src/middleware/*"],
+      "@utils/*": ["src/utils/*"],
+      "@types/*": ["src/types/*"],
+      "@sockets/*": ["src/sockets/*"],
+      "@workers/*": ["src/workers/*"],
+      "@scripts/*": ["src/scripts/*"]
+    },
+    
+    // ============================================
+    // JAVASCRIPT SUPPORT
+    // ============================================
+    "allowJs": true,
+    "checkJs": false,
+    "maxNodeModuleJsDepth": 1,
+    
+    // ============================================
+    // ADVANCED OPTIONS
+    // ============================================
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "incremental": true,
+    "tsBuildInfoFile": "./dist/.tsbuildinfo",
+    
+    // ============================================
+    // SOURCE MAP OPTIONS
+    // ============================================
+    "inlineSourceMap": false,
+    "inlineSources": false,
+    
+    // ============================================
+    // WATCHING OPTIONS
+    // ============================================
+    "watchOptions": {
+      "watchFile": "useFsEvents",
+      "watchDirectory": "useFsEvents",
+      "fallbackPolling": "dynamicPriority",
+      "synchronousWatchDirectory": true,
+      "excludeDirectories": ["**/node_modules", "dist", "logs", "uploads"]
+    },
+    
+    // ============================================
+    // PLUGINS
+    // ============================================
+    "plugins": [
+      {
+        "name": "typescript-eslint-language-service"
+      },
+      {
+        "transform": "typescript-transform-paths"
+      }
+    ]
+  },
+  
+  // ============================================
+  // FILE INCLUSION/EXCLUSION
+  // ============================================
+  "include": [
+    "src/**/*.ts",
+    "src/**/*.json",
+    "src/types/**/*.d.ts"
+  ],
+  "exclude": [
+    "node_modules",
+    "dist",
+    "logs",
+    "uploads",
+    "coverage",
+    "**/*.test.ts",
+    "**/*.spec.ts",
+    "scripts/*.js",
+    "src/scripts/*.py"
+  ],
+  
+  // ============================================
+  // TS NODE OPTIONS (for development)
+  // ============================================
+  "ts-node": {
+    "transpileOnly": true,
+    "files": true,
+    "compilerOptions": {
+      "module": "commonjs"
+    }
+  }
+}
 
+// ============================================
+// USAGE EXAMPLES
+// ============================================
+
+// Development with ts-node:
+// npx ts-node src/app.ts
+
+// Build for production:
+// npm run build
+
+// Watch mode:
+// npm run watch
+
+// Type checking only:
+// npx tsc --noEmit
+
+// Generate declaration files only:
+// npx tsc --emitDeclarationOnly
+
+// Debug configuration for VS Code:
+/*
+{
+  "type": "node",
+  "request": "attach",
+  "name": "Attach to Process",
+  "port": 9229,
+  "restart": true,
+  "skipFiles": ["<node_internals>/**"]
+}
+*/
+
+// Nodemon with ts-node (dev script in package.json):
+/*
+"dev": "nodemon --exec ts-node src/app.ts",
+"watch": "nodemon --watch src --ext ts --exec ts-node src/app.ts"
+*/
