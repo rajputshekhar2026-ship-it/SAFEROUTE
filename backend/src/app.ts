@@ -26,6 +26,10 @@ import watchRoutes from './routes/watchRoutes';
 import checkinRoutes from './routes/checkinRoutes';
 import healthRoutes from './routes/healthRoutes';
 import userRoutes from './routes/userRoutes';
+import refugeRoutes from './routes/refugeRoutes';
+import crimeRoutes from './routes/crimeRoutes';
+import notificationRoutes from './routes/notificationRoutes';
+import uploadRoutes from './routes/uploadRoutes';
 
 // Import middleware
 import { errorHandler } from './middleware/errorHandler';
@@ -79,6 +83,11 @@ app.use(mongoSanitize());
 app.use(hpp());
 
 // ============================================
+// STATIC FILES (for uploaded content)
+// ============================================
+app.use('/uploads', express.static(path.join(__dirname, '../uploads')));
+
+// ============================================
 // RATE LIMITING
 // ============================================
 
@@ -100,9 +109,19 @@ const authLimiter = rateLimit({
   legacyHeaders: false,
 });
 
+// Stricter limiter for SOS endpoints
+const sosLimiter = rateLimit({
+  windowMs: 60 * 1000, // 1 minute
+  max: 3,
+  message: 'Too many SOS requests. Please wait before sending another alert.',
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
 // Apply rate limiting
 app.use('/api/', generalLimiter);
 app.use('/api/auth/', authLimiter);
+app.use('/api/sos/', sosLimiter);
 
 // ============================================
 // LOGGING MIDDLEWARE
@@ -192,10 +211,21 @@ app.use(`${apiPrefix}/checkin`, checkinRoutes);
 app.use('/api/health-mode', healthRoutes);
 app.use(`${apiPrefix}/health-mode`, healthRoutes);
 
-// ============================================
-// STATIC FILES (for uploaded content)
-// ============================================
-app.use('/uploads', express.static(path.join(__dirname, '../uploads')));
+// Refuge routes
+app.use('/api/refuges', refugeRoutes);
+app.use(`${apiPrefix}/refuges`, refugeRoutes);
+
+// Crime prediction routes
+app.use('/api/crime', crimeRoutes);
+app.use(`${apiPrefix}/crime`, crimeRoutes);
+
+// Notification routes
+app.use('/api/notifications', notificationRoutes);
+app.use(`${apiPrefix}/notifications`, notificationRoutes);
+
+// Upload routes
+app.use('/api/upload', uploadRoutes);
+app.use(`${apiPrefix}/upload`, uploadRoutes);
 
 // ============================================
 // 404 HANDLER
@@ -242,6 +272,7 @@ const startServer = async () => {
       logger.info(`🔗 API URL: http://localhost:${PORT}/api/v1`);
       logger.info(`💚 Health check: http://localhost:${PORT}/health`);
       logger.info(`🔌 WebSocket: ws://localhost:${PORT}/socket.io`);
+      logger.info(`📁 Uploads: http://localhost:${PORT}/uploads`);
     });
     
     // Setup graceful shutdown
